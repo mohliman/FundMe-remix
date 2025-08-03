@@ -1,30 +1,56 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-// get funds from users
-// withdraw funds
-// set a minimum funding value in USD
+import {PriceConverter} from "./PriceConverter.sol";
+
+error FundMe__NotOwner();
+error FundMe__InsufficientETH();
+error FundMe__TransactionFailed();
+
 contract FundMe {
-    uint256 public minimumUSD = 5e18;
+    using PriceConverter for uint256;
+
+
+    uint256 public constant MINIMUM_USD = 5e18;
+    address[] public s_funders;
+    mapping(address => uint256) public s_addressToAmountFunded;
+    address public immutable i_owner;
+
+    constructor() {
+        i_owner = msg.sender;
+    }
 
     function fund() public payable {
-        require(getConversionRate(msg.value) >= minimumUSD,"Didnt send enough ETH");
+        if(msg.value.getConversionRate() < MINIMUM_USD){
+            revert FundMe__InsufficientETH();
+        }
+        s_funders.push(msg.sender);
+        s_addressToAmountFunded[msg.sender] += msg.value;
     }
 
-    // 0x694AA1769357215DE4FAC081bf1f309aDC325306 ETH/USD
-    //function withdraw() public {}
-    function getPrice() public view returns (uint256) {
-        AggregatorV3Interface priceFeed = AggregatorV3Interface(0x694AA1769357215DE4FAC081bf1f309aDC325306);
-        (,int256 price,,,) = priceFeed.latestRoundData();
-        return uint256(price * 1e10);
-    }
-    function getConversionRate(uint256 ethAmount) public view returns (uint256) {
-        uint256 ethPrice = getPrice();
-        uint256 ethAmountInUsd = (ethPrice * ethAmount) / 1e18;
-        return ethAmountInUsd;
+    function withdraw() public OnlyOwner {
+        for(uint256 funderIndex = 0; funderIndex < s_funders.length; funderIndex++){
+            address funder = s_funders[funderIndex];
+            s_addressToAmountFunded[funder] = 0;
+        }
+        s_funders = new address[](0);
+        (bool callSuccess, ) = payable(msg.sender).call{value: address(this).balance}("");
+        if(!callSuccess){
+            revert FundMe__TransactionFailed();
+        }
     }
 
+       modifier OnlyOwner(){
+        if(msg.sender != i_owner){
+            revert FundMe__NotOwner();
+        }
+        _;
+    } 
 
-    
+    fallback() external payable { 
+        fund();
+    } 
+    receive() external payable {
+        fund();
+     } 
 }
